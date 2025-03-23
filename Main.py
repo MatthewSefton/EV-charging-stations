@@ -10,7 +10,7 @@ chargingStationRadius=10
 padding = chargingStationRadius*2       #Here so calculating values inside circles don't go out of bounds
 numberOfChargingStations=8
 
-# Generate a random heightmap
+# Generate a random value map
 Z = np.random.rand(size, size)  # Random values between 0 and 1
 
 # Smooth the terrain using a Gaussian filter
@@ -21,11 +21,14 @@ Z = (Z - np.min(Z)) / (np.max(Z) - np.min(Z))
 x_range = np.linspace(-50, 50, size)
 y_range = np.linspace(-50, 50, size)
 X, Y = np.meshgrid(x_range, y_range)
+
+#padding. This is empty space around the map with value=0, so when we add up the scores of the circles things don't break.
 X_padded = np.pad(X, pad_width=padding, mode='edge')
 Y_padded = np.pad(Y, pad_width=padding, mode='edge')
 Z_padded = np.pad(Z, pad_width=padding, mode='constant', constant_values=0)
 
-#define a mask (This is used to efficiently calculate the the sum of values within the radius of a charging station)
+#define a mask (This is used to efficiently calculate the the sum of values within the radius of a charging station. 
+# Kinda complicated but more efficient than using distance formula to every bloody point
 def create_circular_mask(radius):
     radius= int(radius)
     diameter = radius * 2 + 1
@@ -38,24 +41,17 @@ circle_mask = create_circular_mask(chargingStationRadius)
 # Plot the terrain
 fig, ax = plt.subplots(figsize=(8, 6))
 contour = ax.contourf(X, Y, Z, levels=20, cmap="jet")
-plt.colorbar(contour, label="Height")
+plt.colorbar(contour, label="Value")
 ax.set_xlabel("X-axis")
 ax.set_ylabel("Y-axis")
 ax.set_title("Randomly Generated Contour Plot")
 
-# ✅ Add a Charging Station as a circle
-station = ChargingStation(x=-49, y=-49, radius=chargingStationRadius)
-value = station.get_coverage_value(Z_padded, X_padded, Y_padded, circle_mask)
-print("Coverage value:", value)
+#Add a single Charging Station as a circle
+#station = ChargingStation(x=-49, y=-49, radius=chargingStationRadius)
+#value = station.get_coverage_value(Z_padded, X_padded, Y_padded, circle_mask)
+#print("Coverage value:", value)
 
-#display circle
-
-# Keep circles proportional
-ax.set_aspect('equal')
-
-
-
-
+#function to create a set of n charging stations at random locations on the map
 def createSetOfChargingStations(numberOfChargingStations, radius, mapsize):
     stations = []
 
@@ -73,11 +69,14 @@ def createSetOfChargingStations(numberOfChargingStations, radius, mapsize):
     return stations
 
 stations = createSetOfChargingStations(numberOfChargingStations, chargingStationRadius, size)
-
+totalValue=0
 for s in stations:
     value = s.get_coverage_value(Z_padded, X_padded, Y_padded, circle_mask)
+    totalValue+=value
     print(f"Station at ({s.x:.2f}, {s.y:.2f}) → value: {value:.3f}")
     circle = plt.Circle((s.x, s.y), s.radius, color='black', fill=False, linewidth=1)
     ax.add_patch(circle)
-
+    
+print(f"Total value: {totalValue:.3f}")
+ax.set_aspect('equal')
 plt.show()

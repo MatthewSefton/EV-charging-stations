@@ -1,3 +1,4 @@
+#A charging station class. has methods for returning the sum of all points within its radius
 import numpy as np
 class ChargingStation:
     def __init__(self, x, y, radius):
