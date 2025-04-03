@@ -15,26 +15,75 @@ from scipy.ndimage import gaussian_filter
 import math
 
 #Constants
-size = 100                              #A size of 100 will create a map of -50, to 50 in x and y direction and consist of 10,000 points. Increasing this variable dramatically increases time complexity
+size = 500                             #A size of 100 will create a map of -50, to 50 in x and y direction and consist of 10,000 points. Increasing this variable dramatically increases time complexityy
 chargingStationRadius = 10              #The area the station 'covers'
-numberOfChargingStations = 10           #How many stations we have the budget for.
+numberOfChargingStations = 20           #How many stations we have the budget for.
 
 #Evolutionary Algorithm constants
-numberOfGenerations=1000
+numberOfGenerations=10000
 initialPopulationSize=30
 
 
 #Plotting Terrain
 #----------------
-# Generate a smoothed random value map
-Z = np.random.rand(size, size) # values 0 to 5 (optional scaling)
-Z = gaussian_filter(Z, sigma=10)    # smooth it out like terrain
-Z = (Z - np.min(Z)) / (np.max(Z) - np.min(Z))  # normalize again
+# Load map data instead of generating random terrain
+def load_map_data(filename):
+    """Load map data saved by traffic_heatmap.py"""
+    print(f"Attempting to load map data from: {filename}")
+    data = np.load(filename)
+    print(f"Successfully loaded data with keys: {data.files}")
+    return data['X'], data['Y'], data['Z']
 
-# Create a coordinate grid
-x_range = np.linspace(-(size/2), size/2, size)
-y_range = np.linspace(-size/2, size/2, size)
-X, Y = np.meshgrid(x_range, y_range)
+# Try multiple possible paths where the file might be located
+possible_paths = [
+    'map_data/newcastle_traffic_map.npz',
+]
+
+loaded = False
+for path in possible_paths:
+    try:
+        print(f"Trying path: {path}")
+        X, Y, Z = load_map_data(path)
+        print(f"Success! Map data loaded from {path}")
+        print(f"Data dimensions: X: {X.shape}, Y: {Y.shape}, Z: {Z.shape}")
+        loaded = True
+        break
+    except Exception as e:
+        print(f"Failed to load from {path}: {str(e)}")
+
+if not loaded:
+    print("All paths failed. Generating random map...")
+    # Generate a smoothed random value map as a fallback
+    Z = np.random.rand(size, size)
+    Z = gaussian_filter(Z, sigma=10)    # smooth it out like terrain
+    Z = (Z - np.min(Z)) / (np.max(Z) - np.min(Z))  # normalize again
+    
+    # Create a coordinate grid
+    x_range = np.linspace(-(size/2), size/2, size)
+    y_range = np.linspace(-size/2, size/2, size)
+    X, Y = np.meshgrid(x_range, y_range)
+
+# Ensure data is properly scaled for visualization
+if loaded:
+    # Check if we need to adapt the X and Y ranges to match our expected size
+    x_min, x_max = np.min(X), np.max(X)
+    y_min, y_max = np.min(Y), np.max(Y)
+    print(f"X range: {x_min} to {x_max}, Y range: {y_min} to {y_max}")
+    
+    # If the loaded data has very different coordinates than our expected -50 to 50 range
+    # we may need to rescale for visualization
+    if abs(x_max) > 100 or abs(y_max) > 100:
+        print("Coordinates appear to be in a different scale (possibly lat/long).")
+        print("Creating a visualization-friendly version while preserving the data.")
+        
+        # Create a visualization-friendly version of X and Y coordinates
+        x_range = np.linspace(-(size/2), size/2, Z.shape[1])
+        y_range = np.linspace(-(size/2), size/2, Z.shape[0])
+        X_viz, Y_viz = np.meshgrid(x_range, y_range)
+        
+        # We'll use these for visualization but keep the original X, Y for evaluation
+        X_orig, Y_orig = X, Y
+        X, Y = X_viz, Y_viz
 
 # Plot the terrain
 fig, ax = plt.subplots(figsize=(8, 6))

@@ -1,0 +1,4 @@
+trafficMapGen/cache/*
+__pycache__/
+cache/*
+
