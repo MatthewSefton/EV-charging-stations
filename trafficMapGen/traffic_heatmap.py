@@ -44,26 +44,55 @@ def generate_newcastle_traffic_heatmap():
         print("No stations found in Newcastle LGA. Exiting.")
         return
     
-    # Step 2: Generate synthetic traffic data since the yearly summary file is empty
-    print("Generating synthetic traffic data based on station locations...")
+    # New: Read actual traffic count data from a file
+    print("Reading traffic count data...")
+    traffic_counts_file = 'road_traffic_counts_yearly_summary.csv'
+    actual_traffic_counts = {}
+    
+    try:
+        with open(traffic_counts_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    station_id = row['station_id']
+                    if station_id in newcastle_stations and 'traffic_count' in row and row['traffic_count']:
+                        count = float(row['traffic_count'])
+                        # Store the actual traffic count
+                        if station_id not in actual_traffic_counts or count > actual_traffic_counts[station_id]:
+                            actual_traffic_counts[station_id] = count
+                except (ValueError, KeyError) as e:
+                    print(f"Error processing traffic count: {e}")
+                    continue
+        print(f"Found {len(actual_traffic_counts)} traffic count records for Newcastle stations")
+    except Exception as e:
+        print(f"Could not read traffic counts file: {e}")
+        print("Continuing with synthetic data generation...")
+
+    # Step 2: Generate traffic data, preferring actual counts when available
+    print("Generating traffic data based on station locations and counts...")
     traffic_data = []
     
-    # Generate synthetic traffic counts for each station
+    # Generate traffic counts for each station
     center_lat = np.mean([station[0] for station in newcastle_stations.values()])
     center_lon = np.mean([station[1] for station in newcastle_stations.values()])
     
     for station_id, (lat, lon, road_name) in newcastle_stations.items():
-        distance_from_center = np.sqrt((lat - center_lat)**2 + (lon - center_lon)**2)
-        road_factor = 1.0
-        major_road_keywords = ['highway', 'pacific', 'main', 'newcastle', 'king', 'hunter']
-        if any(keyword in road_name.lower() for keyword in major_road_keywords):
-            road_factor = 2.0
+        # Use actual traffic count if available, otherwise generate synthetic data
+        if station_id in actual_traffic_counts:
+            count = actual_traffic_counts[station_id]
+            print(f"Station {station_id} ({road_name}): {count:.1f} vehicles (ACTUAL DATA)")
+        else:
+            distance_from_center = np.sqrt((lat - center_lat)**2 + (lon - center_lon)**2)
+            road_factor = 1.0
+            major_road_keywords = ['highway', 'pacific', 'main', 'newcastle', 'king', 'hunter']
+            if any(keyword in road_name.lower() for keyword in major_road_keywords):
+                road_factor = 2.0
+            
+            base_count = 5000 * road_factor / (1 + 10 * distance_from_center)
+            count = base_count * (0.7 + 0.6 * random.random())
+            print(f"Station {station_id} ({road_name}): {count:.1f} vehicles (SYNTHETIC)")
         
-        base_count = 5000 * road_factor / (1 + 10 * distance_from_center)
-        randomized_count = base_count * (0.7 + 0.6 * random.random())
-        
-        traffic_data.append((lat, lon, randomized_count))
-        print(f"Station {station_id} ({road_name}): {randomized_count:.1f} vehicles")
+        traffic_data.append((lat, lon, count))
     
     if not traffic_data:
         print("Failed to generate traffic data. Exiting.")
@@ -93,6 +122,7 @@ def generate_newcastle_traffic_heatmap():
     
     traffic_grid = np.zeros((grid_size, grid_size))
     
+    # Adjust intensity calculation in the grid loop
     for lat, lon, count in traffic_data:
         i_center = int((lat - lat_min) / (lat_max - lat_min) * (grid_size - 1))
         j_center = int((lon - lon_min) / (lon_max - lon_min) * (grid_size - 1))
@@ -102,11 +132,15 @@ def generate_newcastle_traffic_heatmap():
             for j in range(max(0, j_center - radius), min(grid_size, j_center + radius + 1)):
                 distance = np.sqrt((i - i_center)**2 + (j - j_center)**2)
                 if distance <= radius:
-                    intensity = count * np.exp(-0.5 * (distance/radius)**2) * 1.5
+                    # Reduce the intensity multiplier to smooth out extreme variations
+                    intensity = count * np.exp(-0.5 * (distance / radius)**2) * 1.2
                     traffic_grid[i, j] += intensity
     
-    # Step 4: Apply smoothing for better visualization
-    smoothed_grid = gaussian_filter(traffic_grid, sigma=12)
+    # Apply a stronger smoothing filter
+    smoothed_grid = gaussian_filter(traffic_grid, sigma=15)
+    
+    # Normalize the smoothed grid to reduce unevenness
+    smoothed_grid = (smoothed_grid - np.min(smoothed_grid)) / (np.max(smoothed_grid) - np.min(smoothed_grid))
     
     # NEW: Export the map data for use in Main.py
     export_map_data_for_main(lon_grid, lat_grid, smoothed_grid)
@@ -123,12 +157,12 @@ def generate_newcastle_traffic_heatmap():
     
     satellite_added = False
     try:
-        ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.Esri.WorldImagery, 
-                        attribution_size=8)
+        ctx.add_basemap(ax, crs='EPSG:4326')
+        
         satellite_added = True
-        print("Added satellite basemap successfully")
+        print("Added Stamen Toner Lite basemap successfully")
     except Exception as e:
-        print(f"Could not add satellite imagery: {e}")
+        print(f"Could not add Stamen Toner Lite basemap: {e}")
     
     if satellite_added:
         try:
@@ -153,33 +187,68 @@ def generate_newcastle_traffic_heatmap():
             max_count = max(counts)
             count_range = max_count - min_count if max_count > min_count else 1
             
-            cmap = plt.cm.get_cmap('RdYlGn_r')
             
+            
+            # Green (low) -> Yellow (medium) -> Red (high)
+            traffic_cmap = plt.cm.get_cmap('RdYlGn_r')
+            
+            # Create a custom traffic colormap: Green -> Orange -> Red
+            traffic_colors = [(0, 0.8, 0), (1, 0.5, 0), (0.8, 0, 0)]  # Green -> Orange -> Red
+            traffic_cmap = LinearSegmentedColormap.from_list('traffic_cmap', traffic_colors, N=100)
+
+            # First, draw all roads in light green as base (light traffic)
+            print("Drawing base road network in green...")
             for _, edge in edges.iterrows():
-                ax.plot(*edge['geometry'].xy, color='gray', linewidth=0.8, alpha=0.4,
+                ax.plot(*edge['geometry'].xy, color='green', linewidth=0.8, alpha=0.5,
                         solid_capstyle='round', zorder=1)
             
             print("Mapping traffic data to road network...")
+            # Dictionary to track roads that have been processed with traffic data
+            processed_roads = {}
+            
             for i, (lat, lon, count) in enumerate(traffic_data):
                 point = Point(lon, lat)
+                station_influence_radius = 0.01  # Increased radius for longer road highlighting
                 
+                # Find roads within the influence radius
                 nearby_roads = []
                 for idx, edge in edges.iterrows():
-                    if edge['geometry'].distance(point) < 0.005:
-                        nearby_roads.append((idx, edge))
+                    distance = edge['geometry'].distance(point)
+                    if distance < station_influence_radius:
+                        nearby_roads.append((idx, edge, distance))
                 
                 if not nearby_roads:
                     continue
                 
+                # Sort by distance to prioritize closest roads
+                nearby_roads.sort(key=lambda x: x[2])
                 norm_count = (count - min_count) / count_range
-                color = cmap(norm_count)
                 
-                for _, edge in nearby_roads:
-                    lw = 1.0
-                    ax.plot(*edge['geometry'].xy, color=color, linewidth=lw, alpha=0.8,
+                color = traffic_cmap(norm_count)
+                
+                # Highlight roads with traffic color, fading with distance
+                for idx, edge, distance in nearby_roads:
+                    # Skip if already processed with higher traffic (lower distance)
+                    edge_key = str(idx)
+                    if edge_key in processed_roads and processed_roads[edge_key] < distance:
+                        continue
+                    
+                    # Calculate fade based on distance
+                    fade_factor = 1.0 - (distance / station_influence_radius)
+                    
+
+                    
+                    # Adjust alpha based on distance
+                    alpha = 0.8 * fade_factor
+                    
+                    # Draw the road with traffic color
+                    ax.plot(*edge['geometry'].xy, color=color, linewidth=1, alpha=alpha,
                             solid_capstyle='round', zorder=3,
-                            path_effects=[pe.Stroke(linewidth=lw+1.0, foreground='black', alpha=0.3),
+                            path_effects=[pe.Stroke(linewidth=1.0, foreground='black', alpha=0.3),
                                          pe.Normal()])
+                    
+                    # Mark road as processed
+                    processed_roads[edge_key] = distance
             
             print("Successfully added traffic-based road heat map")
         except ImportError:
@@ -210,7 +279,7 @@ def generate_newcastle_traffic_heatmap():
     
     plt.legend(loc='upper right', framealpha=0.9)
     plt.tight_layout()
-    plt.savefig('newcastle_traffic_satellite_map.png', dpi=400)
+    plt.savefig('newcastle_traffic_satellite_map.png', dpi=300)
     print("Satellite heatmap saved as 'newcastle_traffic_satellite_map.png'")
     
     plt.figure(figsize=(12, 10))
@@ -249,8 +318,9 @@ def export_map_data_for_main(lon_grid, lat_grid, traffic_values):
     
     output_file = os.path.join(output_dir, 'newcastle_traffic_map.npz')
     X, Y = np.meshgrid(lon_grid, lat_grid)
-    Z = traffic_values.T
+    Z = traffic_values.T  # Transpose for correct orientation
     
+    # Ensure Z is normalized
     Z = (Z - np.min(Z)) / (np.max(Z) - np.min(Z))
     
     np.savez(output_file, X=X, Y=Y, Z=Z)
